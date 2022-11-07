@@ -188,6 +188,81 @@ const char *le128_to_str(char(&str)[64], const unsigned char(&val)[16],
 	return le128_to_str(str, hi, lo, bytes_per_unit);
 }
 
+bool SCSI_id(int handle, unsigned char *id_buf)
+{	
+	//SG_IO structure
+	sg_io_hdr io_hdr;
+	unsigned char cdb[16];
+
+
+	/*Prepare ATA command  data-in*/
+	memset(&io_hdr, 0, sizeof(sg_io_hdr_t));
+	memset(&cdb, 0, sizeof(cdb));
+
+	cdb[0] = 0xA1;
+	cdb[1] = 0x08;
+	cdb[2] = 0x0E;
+	cdb[4] = 0x01;
+	cdb[8] = 0xA0;
+	cdb[9] = 0xEC;
+	
+	//io_hdr.flags = SG_FLAG_LUN_INHIBIT;
+	io_hdr.interface_id = 'S';
+
+	io_hdr.cmd_len = sizeof(cdb);
+	io_hdr.dxfer_direction = SG_DXFER_FROM_DEV;
+
+	io_hdr.dxfer_len = 512;
+	io_hdr.dxferp = id_buf;
+	io_hdr.cmdp = cdb;
+	io_hdr.timeout = 36000;
+
+	if (ioctl(handle, SG_IO, &io_hdr) < 0)
+	{
+		cout << "ioctl failed! - Get SCSI identify" << endl;
+		return false;
+	}
+
+	return true;
+}
+
+bool SCSI_smart(int handle, unsigned char *id_buf, int bufSize)
+{	
+	sg_io_hdr io_hdr;
+	unsigned char cdb[16];
+
+	memset(&io_hdr, 0, sizeof(sg_io_hdr_t));
+	memset(&cdb, 0, sizeof(cdb));
+
+	cdb[0] = 0x85;
+	cdb[1] = 0x08;
+	cdb[2] = 0x0E;
+	cdb[4] = 0xD0;
+	cdb[6] = 0x01;
+	cdb[10] = 0x4F;
+	cdb[12] = 0xC2;
+	cdb[14] = 0xB0;
+	
+	io_hdr.interface_id = 'S';
+
+	io_hdr.cmd_len = sizeof(cdb);
+	io_hdr.dxfer_direction = SG_DXFER_FROM_DEV;
+
+	io_hdr.dxfer_len = 512;
+	io_hdr.dxferp = id_buf;
+	io_hdr.cmdp = cdb;
+	io_hdr.timeout = 36000;
+
+	if (ioctl(handle, SG_IO, &io_hdr) < 0)
+	{
+		cout << "ioctl failed! - Get SCSI SMART" << endl;
+		return false;
+	}
+
+	return true;
+
+}
+
 int main(int argc, char *argv[])
 {
 	std::vector<std::string > args;
@@ -242,7 +317,7 @@ int main(int argc, char *argv[])
 			}
 			else
 			{
-				DumpSATASMARTInfo(args[2]);
+				DumpSATASCSI_SMARTInfo(args[2]);
 			}
 		}
 		else if (args[1].compare("-id") == 0)
@@ -253,7 +328,7 @@ int main(int argc, char *argv[])
 			}
 			else
 			{
-				DumpSATAIDInfo(args[2]);
+				DumpSATASCSI_IDInfo(args[2]);
 			}
 		}
 		else if (args[1].compare("-health") == 0)
@@ -265,7 +340,7 @@ int main(int argc, char *argv[])
 			}
 			else
 			{
-				DumpSATAHealthInfo(args[2]);
+				DumpSATASCSI_HealthInfo(args[2]);
 			}
 		}
 		else if (args[1].compare("-all") == 0)
@@ -276,7 +351,7 @@ int main(int argc, char *argv[])
 			}
 			else
 			{
-				DumpSATAAllInfo(args[2]);
+				DumpSATASCSI_AllInfo(args[2]);
 			}
 		}
 		else
@@ -302,7 +377,7 @@ void ListAllDeviceInfo()
 		device_str_byte += device_num;
 		if(isSupport(device_str_byte)!=0)
 		{ 
-			DumpSATAAllInfo(device_str_byte);
+			DumpSATASCSI_AllInfo(device_str_byte);
 		}
 		device_num = device_num + 1;
 		
@@ -324,14 +399,14 @@ void ListAllDeviceInfo()
 		}
 	}
 }
-void DumpSATAAllInfo(string deviceStr)
+void DumpSATASCSI_AllInfo(string deviceStr)
 {
 	int ok = 0;
-	ok += DumpSATAIDInfo(deviceStr);
+	ok += DumpSATASCSI_IDInfo(deviceStr);
 	if (ok == 0)
 	{
-		ok += DumpSATASMARTInfo(deviceStr);
-		ok += DumpSATAHealthInfo(deviceStr);
+		ok += DumpSATASCSI_SMARTInfo(deviceStr);
+		ok += DumpSATASCSI_HealthInfo(deviceStr);
 	}
 }
 
@@ -381,37 +456,109 @@ int DumpNVMEWAI(string deviceStr)
 	 
 }
 
-int DumpSATAIDInfo(string deviceStr)
+int DumpSATASCSI_IDInfo(string deviceStr)
 {
+	std::string model;
+	std::string fw_ver;
+	std::string serial_no;
+
 	struct hd_driveid hd;
 	int fd;
 	memset(&hd, 0, 512);
 	fd = ::open(deviceStr.c_str(), O_RDONLY | O_NONBLOCK);
 	if (fd < 0)
 		return -1;
-	if (!ioctl(fd, HDIO_GET_IDENTITY, &hd))
-	{
-		std::string model(reinterpret_cast<char*> (hd.model));
-		std::string fw_ver(reinterpret_cast<char*> (hd.fw_rev));
-		std::string serial_no(reinterpret_cast<char*> (hd.serial_no));
-		 
-		string s1 = "---------- Disk Information ----------";
-		cout << s1 << endl;
-
-		string s2 = "Model\t\t\t:" + model.substr(0, 40);
-		cout << s2 << endl;
-		string s3 = "FW Version\t\t:" + fw_ver.substr(0, 8);
-		cout << s3 << endl;
-		string s4 = "Serial No\t\t:" + serial_no.substr(0, 20);
-		cout << s4 << endl;
-		string s5 = "Support Interface\t:SATA";
-		cout << s5 << endl;
 		
+	bool isSCSI = false; 
+	
+	int ret = ioctl(fd, HDIO_GET_IDENTITY, &hd);
+	::close(fd);
+	if(ret == 0)  //SATA
+	{
+		model = reinterpret_cast<char*> (hd.model);
+		fw_ver = reinterpret_cast<char*> (hd.fw_rev);
+		serial_no = reinterpret_cast<char*> (hd.serial_no);
+	}
+	else   //SCSI
+	{
+		memset(&hd, 0, 512);
+		unsigned char idTable[512];
+		int sg_fd;
+		sg_fd = ::open(deviceStr.c_str(), O_RDWR);
+		if (sg_fd < 0)
+			return -1;	
+	
+		if(SCSI_id(sg_fd, idTable))
+		{
+			memcpy(&hd, idTable, sizeof(hd_driveid));
+			
+			
+			model = reinterpret_cast<char*> (hd.model);
+			fw_ver = reinterpret_cast<char*> (hd.fw_rev);
+			serial_no = reinterpret_cast<char*> (hd.serial_no);
+			
+			
+			string model_rev = "";
+			int i = 0;
+			while(model[i] != '\0')
+			{
+				model_rev += model[i+1];
+				model_rev += model[i];
+				i+=2;	
+			}
+			model = model_rev;
+			
+			string fw_rev = "";
+			i = 0;
+			while(fw_ver[i] != '\0')
+			{
+				fw_rev += fw_ver[i+1];
+				fw_rev += fw_ver[i];
+				i+=2;	
+			}
+			fw_ver = fw_rev;
+			
+			string serial_rev = "";
+			i = 0;
+			while(serial_no[i] != '\0')
+			{
+				serial_rev += serial_no[i+1];
+				serial_rev += serial_no[i];
+				i+=2;	
+			}
+			serial_no = serial_rev;
+			isSCSI = true;
+	 	}
+	 	else
+	 	{
+	 		::close(sg_fd);
+	 		return -1;
+	 	}
+	 	::close(sg_fd);
+	}
+	
+	
+ 	string s1 = "---------- Disk Information ----------";
+	cout << s1 << endl;
+
+	string s2 = "Model\t\t\t:" + model.substr(0, 40);
+	cout << s2 << endl;
+	string s3 = "FW Version\t\t:" + fw_ver.substr(0, 8);
+	cout << s3 << endl;
+	string s4 = "Serial No\t\t:" + serial_no.substr(0, 20);
+	cout << s4 << endl;
+	string s5 = "";
+	if(isSCSI)
+	{
+		s5 = "Support Interface\t:SCSI";
 	}
 	else
-	{::close(fd);
-		return -1;
-	}::close(fd);
+	{
+		s5 = "Support Interface\t:SATA";
+	}
+	cout << s5 << endl;
+	
+	
 	return 0;
 
 }
@@ -453,18 +600,6 @@ int DumpNVMEIDInfo(string deviceStr)
 }
 vector<string> get_SMART_Attributes(int fd)
 {
-	string CTLName="";
-	unsigned char buf[4+512]=  {WIN_SMART, 0, SMART_READ_VALUES,1};
-	ioctl(fd,HDIO_DRIVE_CMD,(unsigned char*)buf);
-	for(int i = 404; i<=419; i++)
-	{
-		unsigned char *uc = (unsigned char*)(&buf)+i;
-		unsigned char uc_data = *uc;
-		if(uc_data != '\0'){
-		CTLName.append(1,uc_data);
-				 
-		}
-	}
  	vector<string> attributesStringList;
 	
 	attributesStringList.push_back("01 Raw Read Error Rate");
@@ -499,8 +634,9 @@ vector<string> get_SMART_Attributes(int fd)
 	attributesStringList.push_back("F5 Cumulative Program NAND Pages");
 	return attributesStringList;
 }
-int DumpSATASMARTInfo(string deviceStr)
+int DumpSATASCSI_SMARTInfo(string deviceStr)
 {
+	int smartOffset = 0;
 	int fd;
 	int buf_size = 512;
 	fd = ::open(deviceStr.c_str(), O_RDONLY | O_NONBLOCK);
@@ -509,26 +645,32 @@ int DumpSATASMARTInfo(string deviceStr)
 	char id_arr[3];
 	unsigned char buf[buf_size] = { WIN_SMART, 0, SMART_READ_VALUES, 1
 	};
-	ioctl(fd, HDIO_DRIVE_CMD, (unsigned char *) buf);
-	string CTLName="";
-	unsigned char ctlbuf[4+512]=  {WIN_SMART, 0, SMART_READ_VALUES,1};
-	ioctl(fd,HDIO_DRIVE_CMD,(unsigned char*)ctlbuf);
-	for(int i = 404; i<=419; i++)
+	int ret = ioctl(fd, HDIO_DRIVE_CMD, (unsigned char *) buf);
+	
+	if(ret != 0)  //SCSI
 	{
-		unsigned char *uc = (unsigned char*)(&ctlbuf)+i;
-		unsigned char uc_data = *uc;
-		if(uc_data != '\0'){
-		CTLName.append(1,uc_data);
-				 
+		smartOffset = 4;
+		memset(&buf, 0, buf_size);
+		unsigned char varBuf[512];
+		int sg_fd;
+		sg_fd = ::open(deviceStr.c_str(), O_RDWR);
+		if (sg_fd < 0)
+			return false;	
+		if(SCSI_smart(sg_fd, varBuf, 512)){
+			memcpy(&buf, varBuf, sizeof(buf));
 		}
+		::close(sg_fd);
 	}
+	
+	
+
 	vector<string> attributesStringList = get_SMART_Attributes(fd);
 	string s1 = "---------------- S.M.A.R.T Information ----------------";
 	cout << s1 << endl;
  
 	for (auto att_item: attributesStringList)
 	{
-		for (int i = 6; i < buf_size; i += 12)
+		for (int i = (6-smartOffset); i < buf_size; i += 12)
 		{
 			string att_id = att_item.substr(0, 2);
 			sprintf(id_arr, "%02X", buf[i]);
@@ -540,6 +682,7 @@ int DumpSATASMARTInfo(string deviceStr)
 				value = (buf[i + 8] << 24) + (buf[i + 7] << 16) + (buf[i + 6] << 8) + (buf[i + 5]);
 				
 				cout << att_item << "\t" << value <<"\t"<< endl;
+				break;
 			}
 		}
 	}
@@ -565,8 +708,9 @@ int DumpNVMESMARTInfo(string deviceStr)
 	return 0;
 }
 
-int DumpSATAHealthInfo(string deviceStr)
+int DumpSATASCSI_HealthInfo(string deviceStr)
 {
+	int smartOffset = 0;
 	int fd = -1;
 	int buf_size = 512;
 	fd = ::open(deviceStr.c_str(), O_RDONLY | O_NONBLOCK);
@@ -575,7 +719,20 @@ int DumpSATAHealthInfo(string deviceStr)
 	char id_arr[3];
 	unsigned char buf[buf_size] = { WIN_SMART, 0, SMART_READ_VALUES, 1
 	};
-	ioctl(fd, HDIO_DRIVE_CMD, (unsigned char *) buf);
+	int ret = ioctl(fd, HDIO_DRIVE_CMD, (unsigned char *) buf);
+	if(ret != 0)   //SCSI
+	{
+		smartOffset = 4;
+		memset(&buf, 0, 512);
+		unsigned char varBuf[512];
+		int sg_fd;
+		sg_fd = ::open(deviceStr.c_str(), O_RDWR);
+		if(SCSI_smart(sg_fd, varBuf, 512)){
+			memcpy(&buf, varBuf, sizeof(buf));
+		}
+		::close(sg_fd);
+	}
+	
 	vector<string> attributesStringList = get_SMART_Attributes(fd);
 	string s1 = "---------------- Health Information ----------------";
 	cout << s1 << endl;
@@ -586,7 +743,7 @@ int DumpSATAHealthInfo(string deviceStr)
 	int average_erase_count = -1;
 	double spec_erase_count = -1;
 	int remain_life = -1;
-	for (int i = 6; i < buf_size; i += 12)
+	for (int i = (6 - smartOffset); i < buf_size; i += 12)
 	{
 		sprintf(id_arr, "%02X", buf[i]);
 		if (item_remain_life.compare(id_arr) == 0)
@@ -794,9 +951,35 @@ int isSupport(string deviceStr)
 		fd = ::open(deviceStr.c_str(), O_RDONLY | O_NONBLOCK);
 		if (fd < 0)
 			return -1;
-		if (!ioctl(fd, HDIO_GET_IDENTITY, &hd))
+		int ret = ioctl(fd, HDIO_GET_IDENTITY, &hd);
+		if (ret == 0)  //SATA
 		{
 			 model =reinterpret_cast<char*> (hd.model);
+		}
+		else   //SCSI
+		{
+			memset(&hd, 0, 512);
+			unsigned char idTable[512];
+			int sg_fd;
+			sg_fd = ::open(deviceStr.c_str(), O_RDWR);
+			if (sg_fd < 0)
+				return false;	
+			if(SCSI_id(sg_fd, idTable)){
+				memcpy(&hd, idTable, sizeof(hd_driveid));
+				model =reinterpret_cast<char*> (hd.model);
+				
+				string model_rev = "";
+				
+				int i = 0;
+				while(model[i] != '\0')
+				{
+					model_rev += model[i+1];
+					model_rev += model[i];
+					i+=2;	
+				}
+				
+				model = model_rev;
+			}
 		}
 		::close(fd);
 	}
@@ -834,7 +1017,7 @@ void showGuide()
 	cout << "Usage:" << endl;
 	cout << " " << "SMARTQuery_Cmd" << endl;
 	cout << "\tshow all information of devices" << endl;
-	cout << " " << "SMARTQuery_Cmd[option] <device>" << endl;
+	cout << " " << "SMARTQuery_Cmd [option] <device>" << endl;
 	cout << "\tshow specific information of the device by option" << endl;
 	cout << "\nOptions:" << endl;
 	cout << " " << "-all:" << "\t\tlist all information of the device" << endl;
