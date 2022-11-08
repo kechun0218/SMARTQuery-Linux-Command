@@ -30,7 +30,7 @@ Supports SATA and NVMe interface devices.
   - **SMARTQuery_Cmd**\
     show all information of devices
     
-  - **SMARTQuery_Cmd[option] \<device>**\
+  - **SMARTQuery_Cmd [option] \<device>**\
     show specific information of the device by option
     - Options:
       - -all: list all information of the device
